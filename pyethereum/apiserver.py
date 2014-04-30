@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import json
 from bottle import run as bottle_run
 from bottle import Bottle
 from bottle import abort
@@ -87,19 +88,28 @@ class CorsMiddleware:
                 return start_response(status, headers, exc_info)
             return self.app(environ, my_start_response)
 
-# #######cors end##########
+# ####### serialize ########################
+
+def serialize(objs, serializer_class):
+    assert serializer_class.TYPE.endswith('s') # plural
+    if not isinstance(objs, (list, tuple)):
+        objs = [objs]
+    res = []
+    for o in objs:
+        res.append(serializer_class(o).data)
+    data = {serializer_class.TYPE:res}
+    return json.dumps(data, indent=0)
 
 
 # ############ Blocks ######################
 
 
 class Binary(fields.Raw):
-
     def format(self, value):
         return value.encode('hex')
 
-
 class BlockSerializer(Serializer):
+    TYPE = 'blocks'
     blockhash = fields.Function(lambda o: o.hex_hash())
     prevhash = Binary()
     uncles_hash = Binary()
@@ -110,16 +120,10 @@ class BlockSerializer(Serializer):
         fields = [name for name, typ, _ in block_structure] + ['blockhash']
 
 
-class BlocksResponder(Responder):
-    TYPE = 'blocks'
-    SERIALIZER = BlockSerializer
-
-
 @app.get(base_url + '/blocks/')
 def blocks():
     logger.debug('blocks/')
-    return BlocksResponder().respond(
-        chain_manager.get_chain(start='', count=20))
+    return serialize(chain_manager.get_chain(start='', count=20), BlockSerializer)
 
 
 @app.get(base_url + '/blocks/<blockhash>')
@@ -127,7 +131,7 @@ def block(blockhash=None):
     logger.debug('blocks/%s', blockhash)
     blockhash = blockhash.decode('hex')
     if blockhash in chain_manager:
-        return BlocksResponder().respond(chain_manager.get(blockhash))
+        return serialize(chain_manager.get(blockhash), BlockSerializer)
     else:
         return abort(404, 'No block with id %s' % blockhash)
 
@@ -136,20 +140,15 @@ def block(blockhash=None):
 
 
 class PeerSerializer(Serializer):
+    TYPE = 'peers'
     ip = fields.Function(lambda o: o['ip'])
     port = fields.Function(lambda o: str(o['port']))
     node_id = fields.Function(lambda o: o['node_id'].encode('hex'))
 
-
-class PeerResponder(Responder):
-    TYPE = 'peer'
-    SERIALIZER = PeerSerializer
-
-
 def make_peers_response(peers):
     peers = [dict(ip=ip, port=port, node_id=node_id) for
              (ip, port, node_id) in peers]
-    return PeerResponder().respond(peers)
+    return serialize(peers, PeerSerializer)
 
 
 @app.get(base_url + '/connected_peers/')
